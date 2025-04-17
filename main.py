@@ -1,54 +1,45 @@
 import cv2
-import argparse
-
+import numpy as np
+import time
+import serial
 from ultralytics import YOLO
-import supervision as sv
 
+arduino = serial.Serial('COM3', 9600, timeout=1)
 
+model = YOLO("yolo11n.pt")
+model.conf = 0.5
+model.classes = [0]
 
-def parse_arument() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="YOLOv8 live")
-    parser.add_argument(
-        "--webcam-resolution", 
-        default=[1280, 720],
-        nargs=2,
-        type=int
-    )
-    args = parser.parse_args()
-    return args
+cap = cv2.VideoCapture(0)
+cap.set(3, 640)
+cap.set(4, 480)
 
-def main():
-    args = parse_arument()
-    frame_width, frame_height = args.webcam_resolution
+prev_time = time.time()
 
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    results= model(frame)
 
-    model = YOLO("yolov8n.pt")
+    for box in results:
+        x1, y1, x2, y2 = map(int, box.boxes.xyxy[0].tolist())
+        center_x = int((x1 + x2) / 2)
+        center_y = int((y1 + y2) / 2)
 
-    box_annotator = sv.BoxAnnotator(
-        thickness=2,
-        text_thickness=2,
-        text_scale=1
-    )
-
-    while True:
-        ret, frame = cap.read()
-
-        result = model(frame)[0]
-        detections = sv.Detections.from_yolov8(result)
-
-        frame = box_annotator.annotate(scene=frame, detections=detections)
+        try:
+            serial_data = f"{center_x}, {center_y} \n"
+            arduino.write(serial_data.encode())
+        except Exception as ex:
+            print(f"[Serial Error] {ex}")
         
-        cv2.imshow("yolov8", frame)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        
+    cv2.imshow("YOLO11n - Windows PyThorch Version", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
-
-        # print(frame.shape)
-        # break
-
-        if (cv2.waitKey(30) == 27):
-            break
-
-if __name__ == "__main__":
-    main()
+cap.release()
+arduino.close()
+cv2.destroyWindow()
